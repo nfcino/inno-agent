@@ -828,14 +828,6 @@ function EChartsPreview({ source, isIncomplete }: { source: string; isIncomplete
 
 	useEffect(() => {
 		const host = hostRef.current;
-		if (!host) return;
-		const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => chartRef.current?.resize());
-		observer?.observe(host);
-		return () => observer?.disconnect();
-	}, []);
-
-	useEffect(() => {
-		const host = hostRef.current;
 		if (isIncomplete || parsed.error || parsed.option === null || !host) {
 			chartRef.current?.dispose();
 			chartRef.current = null;
@@ -844,6 +836,12 @@ function EChartsPreview({ source, isIncomplete }: { source: string; isIncomplete
 
 		let cancelled = false;
 		setRuntimeError("");
+		// The observer must live in this effect, not a mount-only one: when the
+		// component mounts on an incomplete streaming fence, hostRef is still
+		// null and an empty-deps effect would never attach once the host div
+		// appears on completion.
+		const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => chartRef.current?.resize());
+		observer?.observe(host);
 		void import("echarts").then((echarts) => {
 			if (cancelled || !hostRef.current) return;
 			const chart = chartRef.current ?? (echarts.init(host, undefined, { renderer: "svg" }) as EChartsInstance);
@@ -854,6 +852,7 @@ function EChartsPreview({ source, isIncomplete }: { source: string; isIncomplete
 		});
 		return () => {
 			cancelled = true;
+			observer?.disconnect();
 		};
 	}, [isIncomplete, parsed]);
 

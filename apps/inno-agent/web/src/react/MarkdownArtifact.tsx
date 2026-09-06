@@ -9,6 +9,7 @@ import { settingsStore } from "../stores/settings-store.js";
 import { useStoreSnapshot } from "./hooks.js";
 import { MarkdownRuntime, type MarkdownRuntimeProps } from "./MarkdownRuntime.js";
 import { recoverFromDynamicImportError } from "../utils/dynamic-import-recovery.js";
+import { useTranslation } from "react-i18next";
 
 export interface MarkdownArtifactProps {
 	content: string;
@@ -65,43 +66,49 @@ function isClosingFence(line: string, openingMarker: string): boolean {
  * examples keep their original semantics.
  */
 function unwrapRedundantEChartsFence(source: string): string {
-	let current = source;
-	for (let attempt = 0; attempt < 2; attempt += 1) {
-		const lines = current.replace(/\r\n?/g, "\n").split("\n");
-		let first = 0;
-		while (first < lines.length && !lines[first]!.trim()) first += 1;
-		let last = lines.length - 1;
-		while (last >= first && !lines[last]!.trim()) last -= 1;
-		if (first >= last) return current;
+	// A single pass is sufficient: the unwrapped result is itself an
+	// echarts/json fence, which is not in REDUNDANT_FENCE_LANGUAGES, so a
+	// second attempt could never match again.
+	const lines = source.replace(/\r\n?/g, "\n").split("\n");
+	let first = 0;
+	while (first < lines.length && !lines[first]!.trim()) first += 1;
+	let last = lines.length - 1;
+	while (last >= first && !lines[last]!.trim()) last -= 1;
+	if (first >= last) return source;
 
-		const outer = parseFenceLine(lines[first]!);
-		if (!outer || !REDUNDANT_FENCE_LANGUAGES.has(outer.info.toLowerCase()) || !isClosingFence(lines[last]!, outer.marker)) return current;
+	const outer = parseFenceLine(lines[first]!);
+	if (!outer || !REDUNDANT_FENCE_LANGUAGES.has(outer.info.toLowerCase()) || !isClosingFence(lines[last]!, outer.marker)) return source;
 
-		let innerFirst = first + 1;
-		while (innerFirst < last && !lines[innerFirst]!.trim()) innerFirst += 1;
-		let innerLast = last - 1;
-		while (innerLast >= innerFirst && !lines[innerLast]!.trim()) innerLast -= 1;
-		if (innerFirst >= innerLast) return current;
+	let innerFirst = first + 1;
+	while (innerFirst < last && !lines[innerFirst]!.trim()) innerFirst += 1;
+	let innerLast = last - 1;
+	while (innerLast >= innerFirst && !lines[innerLast]!.trim()) innerLast -= 1;
+	if (innerFirst >= innerLast) return source;
 
-		const inner = parseFenceLine(lines[innerFirst]!);
-		if (!inner || !NESTED_ECHARTS_LANGUAGES.has(inner.info.toLowerCase())) return current;
-		if (isClosingFence(lines[innerLast]!, inner.marker)) {
-			current = lines.slice(innerFirst, innerLast + 1).join("\n");
-			continue;
-		}
-		// A same-length wrapper can share its closing line with the inner fence:
-		// ```text -> ```json -> ... -> ```. Treat that final line as the inner
-		// close too, but only after the outer fence has otherwise matched fully.
-		if (!isClosingFence(lines[last]!, inner.marker)) return current;
-		current = lines.slice(innerFirst, last + 1).join("\n");
+	const inner = parseFenceLine(lines[innerFirst]!);
+	if (!inner || !NESTED_ECHARTS_LANGUAGES.has(inner.info.toLowerCase())) return source;
+	if (isClosingFence(lines[innerLast]!, inner.marker)) {
+		return lines.slice(innerFirst, innerLast + 1).join("\n");
 	}
-	return current;
+	// A same-length wrapper can share its closing line with the inner fence:
+	// ```text -> ```json -> ... -> ```. Treat that final line as the inner
+	// close too, but only after the outer fence has otherwise matched fully.
+	if (!isClosingFence(lines[last]!, inner.marker)) return source;
+	return lines.slice(innerFirst, last + 1).join("\n");
 }
 
 interface MarkdownErrorBoundaryProps {
 	content: string;
 	className?: string;
 	children: ReactNode;
+}
+
+/** Class components cannot call useTranslation, so the retry notice is a
+ * small function child — this also keeps it working with test mocks that
+ * replace react-i18next entirely. */
+function MarkdownRetryStatus() {
+	const { t } = useTranslation();
+	return <div className="inno-markdown-retry-status inno-markdown-preview-status" role="status" aria-live="polite">{t("markdown.retryingRender", "正在恢复 Markdown 渲染…")}</div>;
 }
 
 interface MarkdownErrorBoundaryState {
@@ -164,7 +171,7 @@ class MarkdownErrorBoundary extends Component<MarkdownErrorBoundaryProps, Markdo
 			return (
 				<div className={`inno-markdown ${this.props.className ?? ""}`} aria-busy={retrying || undefined}>
 					{retrying ? (
-						<div className="inno-markdown-retry-status" role="status" aria-live="polite">正在恢复 Markdown 渲染…</div>
+						<MarkdownRetryStatus />
 					) : (
 						<pre className="whitespace-pre-wrap break-words font-mono text-xs">{this.props.content}</pre>
 					)}

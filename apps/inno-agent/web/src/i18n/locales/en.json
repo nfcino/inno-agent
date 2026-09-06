@@ -1099,6 +1099,7 @@
 		"generating": "Generating",
 		"generatingChart": "Generating chart…",
 		"loadingPreview": "Loading preview…",
+		"retryingRender": "Restoring Markdown rendering…",
 		"runCode": "Run code",
 		"collapseCode": "Collapse code",
 		"expandCode": "Expand code",

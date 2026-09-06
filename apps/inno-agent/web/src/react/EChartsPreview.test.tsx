@@ -11,18 +11,42 @@ const echartsMock = vi.hoisted(() => {
 	return { init };
 });
 
+const resizeObserverMock = vi.hoisted(() => {
+	const observe = vi.fn();
+	const disconnect = vi.fn();
+	const construct = vi.fn((_callback: ResizeObserverCallback) => ({ observe, disconnect }));
+	return { observe, disconnect, construct };
+});
+
+class StubResizeObserver {
+	constructor(callback: ResizeObserverCallback) {
+		resizeObserverMock.construct(callback);
+	}
+	observe(target: Element) {
+		resizeObserverMock.observe(target);
+	}
+	disconnect() {
+		resizeObserverMock.disconnect();
+	}
+	unobserve() { /* noop */ }
+}
+
 vi.mock("echarts", () => echartsMock);
-vi.mock("react-i18next", () => ({
-	useTranslation: () => ({
-		t: (_key: string, fallback?: string) => fallback ?? _key,
-	}),
-}));
+vi.mock("react-i18next", () => {
+	// Return a stable t identity: a per-render arrow would bust the useMemo
+	// that keys the chart effect, causing effect churn no production render
+	// (react-i18next's t is stable) would see.
+	const t = (_key: string, fallback?: string) => fallback ?? _key;
+	const translation = { t };
+	return { useTranslation: () => translation };
+});
 
 import { MarkdownArtifact } from "./MarkdownArtifact.js";
 
 afterEach(() => {
 	cleanup();
 	vi.clearAllMocks();
+	vi.unstubAllGlobals();
 });
 
 function chartSource(data: number[]): string {
@@ -137,5 +161,25 @@ describe("ECharts preview lifecycle", () => {
 		await waitFor(() => expect(chart.setOption).toHaveBeenCalledTimes(2));
 		expect(echartsMock.init).toHaveBeenCalledTimes(1);
 		expect(chart.dispose).not.toHaveBeenCalled();
+	});
+
+	it("attaches a resize observer when a fence opened during streaming completes", async () => {
+		vi.stubGlobal("ResizeObserver", StubResizeObserver);
+		const incomplete = [
+			"```echarts",
+			JSON.stringify({ series: [{ type: "bar", data: [120] }] }),
+		].join("\n");
+		const { container, rerender } = render(<MarkdownArtifact content={incomplete} streaming />);
+
+		// Mounted while the fence is open: no host div exists yet, so nothing
+		// may be observed at this point.
+		await waitFor(() => expect(container.querySelector('[data-inno-artifact="echarts"]')).not.toBeNull());
+		expect(resizeObserverMock.construct).not.toHaveBeenCalled();
+
+		rerender(<MarkdownArtifact content={chartSource([120])} streaming />);
+		await waitFor(() => expect(resizeObserverMock.construct).toHaveBeenCalledTimes(1));
+		const host = container.querySelector('[data-inno-artifact="echarts"] .inno-markdown-echarts-host');
+		expect(host).not.toBeNull();
+		expect(resizeObserverMock.observe).toHaveBeenCalledWith(host);
 	});
 });
