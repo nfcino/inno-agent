@@ -1099,6 +1099,7 @@
 		"generating": "生成中",
 		"generatingChart": "正在生成图表…",
 		"loadingPreview": "正在加载预览…",
+		"retryingRender": "正在恢复 Markdown 渲染…",
 		"runCode": "运行代码",
 		"collapseCode": "折叠代码",
 		"expandCode": "展开代码",
